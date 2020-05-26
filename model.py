@@ -27,21 +27,43 @@ class FeaturesData:
     self.race_df, \
     self.employment_df = dataload.get_all_datasets()
   
-  def get_feature_vector(self, county, current_date, lookback_date):
+  def weighted_average_feature(self, sequence, mu, sigma):
+    total = 0.0
+    weight_total = 0.0
+    for i, s in enumerate(sequence):
+      w = np.exp( (i - mu) ** 2 / (2 * sigma ** 2) )
+      weight_total += w
+      total += w * s
+    return total / weight_total
+  
+  def get_feature_vector(self, county, current_date, lookback_date, weight_mu, weight_sig):
     features = []
     features += self.census_df.loc[county, 'Population':].to_list()
-    features += self.deaths_df.loc[county, lookback_date:current_date].to_list()
-    features += self.positive_tests_df.loc[county, lookback_date:current_date].to_list()
-    features += self.negative_tests_df.loc[county, lookback_date:current_date].to_list()
-    #features += self.hospitals_df.loc[county, lookback_date:current_date].to_list()
+    features += [self.weighted_average_feature(self.deaths_df.loc[county, lookback_date:current_date].to_list(),
+                                               weight_mu, weight_sig)]
+    ##features += [self.weighted_average_feature(self.positive_tests_df.loc[county, lookback_date:current_date].to_list(),
+    ##                                           weight_mu, weight_sig)]
+    features += [self.weighted_average_feature(self.negative_tests_df.loc[county, lookback_date:current_date].to_list(),
+                                               weight_mu, weight_sig)]
+    
+    features += [self.weighted_average_feature(self.hospitals_df.loc[county, lookback_date:current_date].to_list(),
+                                               weight_mu, weight_sig)]
     features += self.education_df.loc[county, :].to_list()  # use all features (not time-based)
     features += self.employment_df.loc[county, :].to_list()  # use all features (not time-based)
     features += self.race_df.loc[county, :].to_list()  # use all features (not time-based)
-    #features += self.unacast_distance_dff.loc[county, lookback_date:current_date].to_list()
-    #features += self.unacast_visitation_dff.loc[county, lookback_date:current_date].to_list()
-    features += self.unacast_total.loc[county, lookback_date:current_date].to_list()
-    #features += self.distance_traveled.loc[county, lookback_date:current_date].to_list()
-    features += self.confirmed_cases_df.loc[county, lookback_date:current_date].to_list()
+    #features += [self.weighted_average_feature(self.unacast_distance_dff.loc[county, lookback_date:current_date].to_list(),
+    #                                           weight_mu, weight_sig)]
+    #features += [self.weighted_average_feature(self.unacast_visitation_dff.loc[county, lookback_date:current_date].to_list(),
+    #                                           weight_mu, weight_sig)]
+    
+    ##features += [self.weighted_average_feature(self.unacast_total.loc[county, lookback_date:current_date].to_list(),
+    ##                                           weight_mu, weight_sig)]
+    
+    #features += [self.weighted_average_feature(self.distance_traveled.loc[county, lookback_date:current_date].to_list(),
+    #                                          weight_mu, weight_sig)]
+    features += [self.weighted_average_feature(self.confirmed_cases_df.loc[county, lookback_date:current_date].to_list(),
+                                               weight_mu, weight_sig)]
+    features += [self.confirmed_cases_df.loc[county, current_date]]
     return features
 
 
@@ -50,7 +72,9 @@ def build_training_dataset(
         future_prediction_days,
         obj_fun_type,
         start_prediction_date,
-        last_prediction_date):
+        last_prediction_date,
+        weight_mu,
+        weight_sig):
   """
   Builds the feature vectors and labels for training. See the 'run' function for description and reasonable default values
   :param days_of_history:
@@ -84,7 +108,7 @@ def build_training_dataset(
       current_date = prediction_date - timedelta(days=future_prediction_days)
       lookback_date = current_date - timedelta(days=days_of_history)
       if fd.confirmed_cases_df.loc[county, current_date] >= 7:
-        features = fd.get_feature_vector(county, current_date, lookback_date)
+        features = fd.get_feature_vector(county, current_date, lookback_date, weight_mu, weight_sig)
         if prediction_date == last_prediction_date:
           feature_vectors_last_date[(county, prediction_date)] = features
           labels_last_date[(county, prediction_date)] = fd.confirmed_cases_df.loc[county, prediction_date]
@@ -101,7 +125,7 @@ def build_training_dataset(
     if fd.confirmed_cases_df.loc[county, last_prediction_date] >= 7:
       lookback_date = last_prediction_date - timedelta(days=days_of_history)
       try:
-        features = fd.get_feature_vector(county, last_prediction_date, lookback_date)
+        features = fd.get_feature_vector(county, last_prediction_date, lookback_date, weight_mu, weight_sig)
         feature_vectors_future[(county, last_prediction_date + timedelta(days=future_prediction_days))] = \
           features
         
@@ -247,6 +271,9 @@ def run():
   start_prediction_date = dt(2020, 3, 4).date() #the earliest date the model will use as a training example label
   last_prediction_date = dt(2020, 4, 7).date() #the last date the model will use as a training example label
   
+  historical_weight_mean = 14
+  historical_weight_std_dev = 2
+
   #the model will use all of the labels for the last_prediction_date as test cases where it will output the predictions
   # made for that date previously (future_prediction_days days prior)
   
@@ -261,7 +288,9 @@ def run():
       future_prediction_days,
       obj_fun_type,
       start_prediction_date,
-      last_prediction_date
+      last_prediction_date,
+      historical_weight_mean,
+      historical_weight_std_dev
     )
 
   #train the model and output the predictions
